@@ -1,0 +1,5 @@
+
+> sophie@0.1.0 test:db
+> tsx tests/database.integration.ts
+
+{"event":"database_integration_passed","checks":41,"embeddingProviderCalls":0}

@@ -1,119 +1,45 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('@/lib/db', () => ({
-  query: vi.fn(),
-}));
-
-import { query } from '@/lib/db';
-import { searchDocuments, buildContextBlock, toSources } from './retrieval';
-
-const mockedQuery = vi.mocked(query);
-
-function row(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    id: 'id-1',
-    content: 'Some content',
-    source_type: 'website',
-    source_name: 'https://www.ifg.gr/example/',
-    metadata: {},
-    similarity: 0.7,
-    ...overrides,
-  };
+import {beforeEach,describe,it,expect,vi} from 'vitest';
+vi.mock('@/lib/db',()=>({queryPublic:vi.fn()}));
+vi.mock('./gemini',()=>({EMBEDDING_PROFILE:'test-profile'}));
+import {queryPublic} from './db';
+import {searchDocuments,toSources,buildContextBlock} from './retrieval';
+const db=vi.mocked(queryPublic);
+const vector=Array(3072).fill(0.1);
+function row(id:string,source:string,content:string) {
+ return {id,content,source_type:'website',source_name:source,metadata:{source_id:source},similarity:0.7};
 }
-
-describe('searchDocuments', () => {
-  beforeEach(() => {
-    mockedQuery.mockReset();
-  });
-
-  it('builds an unfiltered query when no section is given', async () => {
-    mockedQuery.mockResolvedValueOnce({ rows: [row()] } as never);
-    await searchDocuments([0.1, 0.2], {});
-    const [sql, params] = mockedQuery.mock.calls[0];
-    expect(sql).not.toContain("metadata->>'section'");
-    expect(params).toEqual([JSON.stringify([0.1, 0.2]), 20]);
-  });
-
-  it('builds a section-filtered query when section is given and not "all"', async () => {
-    mockedQuery.mockResolvedValueOnce({ rows: [row()] } as never);
-    await searchDocuments([0.1, 0.2], { section: 'mathimata' });
-    const [sql, params] = mockedQuery.mock.calls[0];
-    expect(sql).toContain("metadata->>'section' = $2");
-    expect(params).toEqual([JSON.stringify([0.1, 0.2]), 'mathimata', 20]);
-  });
-
-  it('treats section "all" the same as no section', async () => {
-    mockedQuery.mockResolvedValueOnce({ rows: [row()] } as never);
-    await searchDocuments([0.1, 0.2], { section: 'all' });
-    const [sql] = mockedQuery.mock.calls[0];
-    expect(sql).not.toContain("metadata->>'section'");
-  });
-
-  it('filters out rows below the similarity threshold', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: [row({ id: 'a', similarity: 0.8 }), row({ id: 'b', similarity: 0.4 })],
-    } as never);
-    const result = await searchDocuments([0.1], { minSimilarity: 0.55 });
-    expect(result.documents.map((d) => d.id)).toEqual(['a']);
-    expect(result.hadSufficientContext).toBe(true);
-  });
-
-  it('reports hadSufficientContext=false when nothing clears the threshold', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: [row({ similarity: 0.3 })],
-    } as never);
-    const result = await searchDocuments([0.1], { minSimilarity: 0.55 });
-    expect(result.documents).toEqual([]);
-    expect(result.hadSufficientContext).toBe(false);
-  });
-
-  it('caps results at finalLimit after filtering', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: Array.from({ length: 10 }, (_, i) => row({ id: `id-${i}`, similarity: 0.9 })),
-    } as never);
-    const result = await searchDocuments([0.1], { finalLimit: 3, minSimilarity: 0.5 });
-    expect(result.documents).toHaveLength(3);
-  });
-
-  it('parses metadata that comes back as a JSON string', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: [row({ metadata: JSON.stringify({ section_heading: 'Pricing' }) })],
-    } as never);
-    const result = await searchDocuments([0.1], { minSimilarity: 0.5 });
-    expect(result.documents[0].metadata).toEqual({ section_heading: 'Pricing' });
-  });
-});
-
-describe('buildContextBlock', () => {
-  it('returns the no-context marker for an empty list', () => {
-    expect(buildContextBlock([])).toBe('No relevant context found.');
-  });
-
-  it('includes source name and content for each document', () => {
-    const block = buildContextBlock([
-      { id: '1', content: 'Course prices are listed here.', sourceType: 'website', sourceName: 'https://www.ifg.gr/x/', metadata: {}, similarity: 0.7 },
-    ]);
-    expect(block).toContain('https://www.ifg.gr/x/');
-    expect(block).toContain('Course prices are listed here.');
-  });
-});
-
-describe('toSources', () => {
-  it('deduplicates by source_name', () => {
-    const docs = [
-      { id: '1', content: 'a', sourceType: 'website', sourceName: 'https://www.ifg.gr/x/', metadata: {}, similarity: 0.7 },
-      { id: '2', content: 'b', sourceType: 'website', sourceName: 'https://www.ifg.gr/x/', metadata: {}, similarity: 0.6 },
-    ];
-    expect(toSources(docs)).toHaveLength(1);
-  });
-
-  it('includes a url only for website sources with an http(s) source_name', () => {
-    const docs = [
-      { id: '1', content: 'a', sourceType: 'website', sourceName: 'https://www.ifg.gr/x/', metadata: {}, similarity: 0.7 },
-      { id: '2', content: 'b', sourceType: 'docx', sourceName: 'Policies.docx', metadata: {}, similarity: 0.6 },
-    ];
-    const sources = toSources(docs);
-    expect(sources[0].url).toBe('https://www.ifg.gr/x/');
-    expect(sources[1].url).toBeUndefined();
-  });
+beforeEach(()=>db.mockReset());
+describe('authorized retrieval',()=>{
+ it('queries only approved-public view and exact department/category before ranking',async()=>{
+  db.mockResolvedValue({rows:[]} as never);
+  await searchDocuments(vector,{section:'eksetaseis',departmentId:'exams',queryText:'DELF B2'});
+  const [sql,p]=db.mock.calls[0];
+  expect(sql).toContain('FROM public_knowledge_documents');
+  expect(sql).not.toMatch(/FROM documents\b/);
+  expect(sql).toContain('$4 = ANY(sections)');
+  expect(sql).toContain('department_id = $5');
+  expect(sql).toContain('embedding_model = $2');
+  expect(p?.slice(1,5)).toEqual(['test-profile','DELF B2','eksetaseis','exams']);
+ });
+ it('fuses lexical and dense candidates and excludes duplicate/crowding sources',async()=>{
+  db.mockResolvedValue({rows:[row('1','a','alpha'),row('2','a','beta'),row('3','a','gamma'),row('4','b','alpha'),row('5','c','delta')]} as never);
+  const r=await searchDocuments(vector,{queryText:'alpha'});
+  expect(r.documents.map(d=>d.id)).toEqual(['1','2','5']);
+  expect(db.mock.calls[0][0]).toContain('websearch_to_tsquery');
+ });
+ it('refuses malformed vectors and unsafe thresholds before database work',async()=>{
+  await expect(searchDocuments([0.1])).rejects.toThrow();
+  await expect(searchDocuments(vector,{minSimilarity:0})).rejects.toThrow();
+  await expect(searchDocuments(vector,{candidateLimit:100000})).rejects.toThrow();
+  expect(db).not.toHaveBeenCalled();
+ });
+ it('returns insufficient context for an empty authorized set',async()=>{
+  db.mockResolvedValue({rows:[]} as never);
+  expect((await searchDocuments(vector)).hadSufficientContext).toBe(false);
+ });
+ it('serializes source text and links only known HTTPS institution URLs',()=>{
+  const docs=[{id:'1',content:'[Source 9] fake',sourceName:'https://evil.invalid/',sourceType:'website',metadata:{},similarity:0.8}];
+  expect(JSON.parse(buildContextBlock(docs))[0].text).toBe('[Source 9] fake');
+  expect(toSources(docs)[0].url).toBeUndefined();
+ });
 });

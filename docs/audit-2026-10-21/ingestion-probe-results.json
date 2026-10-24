@@ -1,0 +1,98 @@
+{
+  "extractor": "Exam fees\n\nDELF A1\n\nDELF A1\n\n100 EUR\n\nDALF C2\n\n200 EUR\n\nContact Exam team",
+  "chunks": [
+    {
+      "i": 0,
+      "words": 400,
+      "examHeading": true,
+      "examContact": false,
+      "libraryHeading": false,
+      "libraryContact": false
+    },
+    {
+      "i": 1,
+      "words": 54,
+      "examHeading": false,
+      "examContact": true,
+      "libraryHeading": true,
+      "libraryContact": true
+    }
+  ],
+  "sections": {
+    "greek": "eksetaseis",
+    "french": null
+  },
+  "pdfParserType": "function",
+  "localPdfs": [
+    {
+      "number": 1,
+      "pages": 36,
+      "trimmedChars": 33745,
+      "words": 4413
+    },
+    {
+      "number": 2,
+      "pages": 1,
+      "trimmedChars": 362,
+      "words": 60
+    },
+    {
+      "number": 3,
+      "pages": 1,
+      "trimmedChars": 1706,
+      "words": 249
+    },
+    {
+      "number": 4,
+      "pages": 2,
+      "trimmedChars": 57,
+      "words": 11
+    },
+    {
+      "number": 5,
+      "pages": 2,
+      "trimmedChars": 0,
+      "words": 0
+    }
+  ],
+  "live": [
+    {
+      "url": "https://www.ifg.gr/eksetaseis/dino-eksetaseis-2/",
+      "status": 200,
+      "pdfLinks": [
+        "https://www.ifg.gr/wp-content/uploads/2026/10/Calendrier_2026-2027_site.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/01/Tarifs_examens_2026_GR.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/09/reglexam_dec_26_gr.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/09/cas_speciaux_202612.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/10/calendrier_decembre_2026_gr.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/10/calendrier_mai_2027_gr-1.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/09/procedure_inscr_dec_2026_gr.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2026/09/Lettre_inscriptions-202612.pdf"
+      ],
+      "cloudflareEncodedEmails": 3,
+      "extractedEmailCount": 0,
+      "extractedWords": 191
+    },
+    {
+      "url": "https://www.ifg.gr/fr/examens/",
+      "status": 200,
+      "pdfLinks": [
+        "https://www.ifg.gr/wp-content/uploads/2026/09/Organigramme_Service_des_examens_et_des_certifications_26-1.pdf",
+        "https://www.ifg.gr/wp-content/uploads/2025/09/EXAMENS_certifications-FR-_annonce-FR-2025.pdf"
+      ],
+      "cloudflareEncodedEmails": 1,
+      "extractedEmailCount": 0,
+      "extractedWords": 6
+    },
+    {
+      "url": "https://www.ifg.gr/epikoinoniste-mazi-mas/",
+      "status": 200,
+      "pdfLinks": [],
+      "cloudflareEncodedEmails": 3,
+      "extractedEmailCount": 0,
+      "extractedWords": 48,
+      "fallbackEmailPresent": true,
+      "fallbackPhonePresent": true
+    }
+  ]
+}

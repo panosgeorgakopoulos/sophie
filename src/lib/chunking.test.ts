@@ -62,3 +62,29 @@ describe('chunkText', () => {
     expect(secondChunkWords.slice(0, overlapCandidate.length)).toEqual(overlapCandidate);
   });
 });
+
+import { chunkStructuredDocument } from './chunking';
+
+describe('structured ingestion regression gates', () => {
+  it('preserves every token around interior dots, Greek punctuation and contact labels', () => {
+    const tokens = [...Array.from({length:420},(_,i)=>`λέξη${i}`), 'Contact:', 'library@example.invalid', 'https://ifg.gr/fr/examens/', '12.50€', 'DELF.B2'];
+    const actual=chunkText(tokens.join(' '),{chunkSize:100,overlap:0}).join(' ').split(/\s+/);
+    expect(actual).toEqual(tokens);
+  });
+  it('never mixes departments and repeats the governing heading for atomic contacts', () => {
+    const chunks=chunkStructuredDocument('Institut',[{kind:'paragraph',headingPath:['Examens'],text:Array(800).fill('exam').join(' ')},
+      {kind:'contact',headingPath:['Examens'],text:'Contact: examens@example.invalid'},
+      {kind:'contact',headingPath:['Médiathèque'],text:'Contact: library@example.invalid'}]);
+    const exam=chunks.find(chunk=>chunk.content.includes('examens@'))!;
+    const library=chunks.find(chunk=>chunk.content.includes('library@'))!;
+    expect(exam.content).toContain('Institut > Examens');
+    expect(library.content).toContain('Institut > Médiathèque');
+    expect(library.content).not.toContain('examens@');
+  });
+  it('rejects oversized atomic rows rather than dropping attribution', () => {
+    expect(()=>chunkStructuredDocument('T',[{kind:'table_row',headingPath:['Fees'],text:Array(801).fill('word').join(' ')}])).toThrow('Atomic');
+  });
+  it.each([{chunkSize:0},{chunkSize:100,overlap:100},{overlap:-1}])('rejects unsafe chunk configuration %j',options=>{
+    expect(()=>chunkText('text',options)).toThrow();
+  });
+});

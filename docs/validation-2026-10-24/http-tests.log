@@ -1,0 +1,5 @@
+
+> sophie@0.1.0 test:http
+> tsx tests/http.integration.ts
+
+{"event":"http_integration_passed","checks":25,"externalProviderCalls":0}

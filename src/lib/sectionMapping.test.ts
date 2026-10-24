@@ -32,3 +32,9 @@ describe('mapUrlToSection', () => {
     expect(mapUrlToSection('https://www.ifg.gr/synergeies-archive/')).toBeUndefined();
   });
 });
+
+describe('French category parity',()=>{
+  it.each([
+    ['cours-de-francais','mathimata'],['examens','eksetaseis'],['etudes-en-france','spoudes'],['cooperation','synergeies'],['mediatheque','vivliothiki'],
+  ])('maps /fr/%s descendants', (path,section)=>expect(mapUrlToSection(`https://www.ifg.gr/fr/${path}/detail/`)).toBe(section));
+});

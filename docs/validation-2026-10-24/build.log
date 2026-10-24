@@ -1,0 +1,52 @@
+
+> sophie@0.1.0 build
+> vite build && next build
+
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1932 modules transformed.
+rendering chunks...
+computing gzip size...
+public/widget.js  215.92 kB │ gzip: 69.72 kB
+
+✓ built in 98ms
+▲ Next.js 16.4.2 (Turbopack)
+- Environments: .env.local
+✓ Running next.config.ts took 10ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 226ms
+  Running TypeScript ...
+  Finished TypeScript in 816ms ...
+  Collecting page data using 9 workers ...
+  Generating static pages using 9 workers (0/20) ...
+  Generating static pages using 9 workers (5/20)
+  Generating static pages using 9 workers (10/20)
+  Generating static pages using 9 workers (15/20)
+✓ Generating static pages using 9 workers (20/20) in 111ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /admin
+├ ƒ /admin/conversations
+├ ƒ /admin/documents
+├ ƒ /admin/flagged
+├ ƒ /admin/login
+├ ƒ /api/admin/auth/login
+├ ƒ /api/admin/auth/logout
+├ ƒ /api/admin/knowledge
+├ ƒ /api/admin/uploads
+├ ƒ /api/chat
+├ ƒ /api/draft-email
+├ ƒ /api/feedback
+├ ƒ /api/webhook/google-form
+├ ƒ /outlook
+├ ƒ /preview
+└ ƒ /privacy
+
+
+ƒ Proxy (Middleware)
+
+ƒ  (Dynamic)  server-rendered on demand

@@ -10,7 +10,7 @@ export default defineConfig({
     outDir: 'public',
     emptyOutDir: false,
     lib: {
-      entry: path.resolve(__dirname, 'src/widget/main.tsx'),
+      entry: path.resolve(import.meta.dirname, 'src/widget/main.tsx'),
       name: 'IFGChatWidget',
       fileName: () => 'widget.js',
       formats: ['iife']

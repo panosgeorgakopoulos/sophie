@@ -1,13 +1,9 @@
-import { redirect } from 'next/navigation';
-import { getAdminSession } from '@/lib/adminSession';
+import { requireAdminSession } from '@/lib/adminSession';
 import AdminNav from './AdminNav';
 import ClientLogoutButton from './ClientLogoutButton';
 
 export default async function ProtectedAdminLayout({ children }: { children: React.ReactNode }) {
-  const session = await getAdminSession();
-  if (!session) {
-    redirect('/admin/login');
-  }
+  const session = await requireAdminSession();
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -16,7 +12,7 @@ export default async function ProtectedAdminLayout({ children }: { children: Rea
           <p className="font-semibold text-gray-900">Sophie</p>
           <p className="text-xs text-gray-500">Staff Dashboard</p>
         </div>
-        <AdminNav />
+        <AdminNav role={session.role} />
         <div className="mt-auto px-5 py-4 border-t border-gray-200">
           <p className="text-xs text-gray-500 truncate" title={session.email}>
             {session.name}

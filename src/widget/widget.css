@@ -1,4 +1,6 @@
 .ifg-widget-wrapper {
+  color: #1f2937;
+  color-scheme: light;
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -261,6 +263,8 @@
 }
 
 .ifg-textarea {
+  color: #111827;
+  background: white;
   flex: 1;
   resize: none;
   border: 1px solid #d1d5db;
@@ -275,6 +279,7 @@
 .ifg-textarea:focus {
   border-color: #0055A4;
 }
+.ifg-textarea::placeholder { color: #64748b; opacity: 1; }
 
 .ifg-send-btn {
   width: 40px;
@@ -330,9 +335,7 @@
   white-space: nowrap;
 }
 
-.ifg-source-chip:hover {
-  text-decoration: underline;
-}
+.ifg-source-chip a { text-decoration: underline; }
 
 .ifg-source-chip--static {
   color: #6b7280;
@@ -391,3 +394,11 @@
     border-radius: 0;
   }
 }
+
+.ifg-privacy-notice { margin: 0; padding: 8px 12px; font-size: 11px; line-height: 1.4; color: #555; background: #f8f9fa; }
+.ifg-privacy-notice a { text-decoration: underline; color: inherit; }
+.ifg-source-chip details, details.ifg-source-chip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; border-radius: 8px; padding: 8px; line-height: 1.5; }
+.ifg-source-chip summary { cursor: pointer; }
+.ifg-source-chip blockquote { margin: 6px 0; white-space: pre-wrap; }
+.ifg-source-chip small { display: block; overflow-wrap: anywhere; }
+.ifg-close-btn:disabled { opacity: .5; cursor: wait; }

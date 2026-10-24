@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "files": {
+    "exam-policy.md": {
+      "sections": ["eksetaseis"],
+      "language": "mul",
+      "departmentId": "exams",
+      "audience": "private",
+      "authority": 80,
+      "effectiveFrom": null,
+      "expiresAt": null
+    }
+  },
+  "requiredUrls": ["https://www.ifg.gr/eksetaseis/dino-eksetaseis-2/"]
+}

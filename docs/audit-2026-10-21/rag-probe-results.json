@@ -1,0 +1,63 @@
+{
+  "syntheticFixturesOnly": true,
+  "liveDatabaseOrModelCalls": 0,
+  "emailLoss": {
+    "inputWords": 424,
+    "inputEmail": "library@example.invalid",
+    "outputRetainsEmail": false,
+    "outputRetainsContactLabel": false,
+    "secondChunkStart": "Département bibliothèque. invalid information information information information information i"
+  },
+  "headingChunks": [
+    {
+      "words": 397,
+      "hasDepartment": true,
+      "hasEmail": false
+    },
+    {
+      "words": 56,
+      "hasDepartment": false,
+      "hasEmail": true
+    }
+  ],
+  "mappings": [
+    {
+      "url": "https://www.ifg.gr/eksetaseis/",
+      "section": "eksetaseis"
+    },
+    {
+      "url": "https://www.ifg.gr/fr/examens/",
+      "section": null
+    }
+  ],
+  "route": {
+    "embeddedText": "Et son numéro ?",
+    "forwardedHistory": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Tell me about the exam department."
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The verified direct phone is +30 210 0000000."
+          }
+        ]
+      }
+    ],
+    "generatedContextContainsPhone": false,
+    "returnedReply": "Library direct phone: +30 210 0000000",
+    "returnedSources": [
+      {
+        "source_name": "https://example.invalid/library/",
+        "source_type": "website",
+        "url": "https://example.invalid/library/"
+      }
+    ]
+  }
+}

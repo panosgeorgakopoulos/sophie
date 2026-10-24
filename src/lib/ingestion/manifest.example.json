@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "files": {
+    "reviewed-course-policy.md": {
+      "sections": ["mathimata"],
+      "language": "mul",
+      "departmentId": "courses",
+      "audience": "private",
+      "authority": 70,
+      "effectiveFrom": null,
+      "expiresAt": null
+    }
+  },
+  "requiredUrls": [
+    "https://www.ifg.gr/eksetaseis/dino-eksetaseis-2/"
+  ]
+}

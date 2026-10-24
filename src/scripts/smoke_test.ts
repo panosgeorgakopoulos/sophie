@@ -42,10 +42,9 @@ async function runSmokeTest() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: question,
-            conversation_history: [],
-            session_id: 'smoke_test_session',
             section: scenario.section,
           }),
+          signal: AbortSignal.timeout(25000),
         });
 
         if (!response.ok) {

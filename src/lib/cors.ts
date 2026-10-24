@@ -1,42 +1,23 @@
-// Restricts cross-origin access to the exact ifg.gr origin(s) the widget is
-// embedded on (plus localhost for dev), instead of a wildcard. The widget is
-// designed to be embedded on ifg.gr and call back to wherever this app is
-// hosted, so its API routes must be reachable cross-origin -- but only from
-// the real site.
-
 function getAllowedOrigins(): string[] {
-  const raw = process.env.ALLOWED_ORIGINS ?? '';
-  const configured = raw.split(',').map((o) => o.trim()).filter(Boolean);
-  // Always allow local dev regardless of env config.
-  return [...new Set([...configured, 'http://localhost:3000'])];
+  const values = [process.env.APP_ORIGIN ?? '', ...(process.env.ALLOWED_ORIGINS ?? '').split(',')];
+  if (process.env.NODE_ENV !== 'production') values.push('http://localhost:3000');
+  return [...new Set(values.map(value => value.trim()).filter(value => {
+    try {
+      const url = new URL(value);
+      return value === url.origin && (url.protocol === 'https:' || (process.env.NODE_ENV !== 'production' && url.protocol === 'http:'));
+    } catch { return false; }
+  }))];
 }
+export interface CorsCheck { allowed: boolean; headers: Record<string, string> }
 
-export interface CorsCheck {
-  allowed: boolean;
-  headers: Record<string, string>;
-}
-
-// `origin` is the request's Origin header. No Origin header (e.g. curl,
-// server-to-server, same-origin navigation) is allowed through -- CORS only
-// governs browser cross-origin fetches, so absence of the header is not an
-// attack vector here.
+// Public APIs also accept non-browser clients. CORS is not authentication or an abuse control.
 export function checkCors(origin: string | null): CorsCheck {
-  if (!origin) {
-    return { allowed: true, headers: {} };
-  }
-
-  const allowedOrigins = getAllowedOrigins();
-  if (!allowedOrigins.includes(origin)) {
-    return { allowed: false, headers: {} };
-  }
-
-  return {
-    allowed: true,
-    headers: {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      Vary: 'Origin',
-    },
-  };
+  if (!origin) return { allowed: true, headers: {} };
+  if (!getAllowedOrigins().includes(origin)) return { allowed: false, headers: {} };
+  return { allowed: true, headers: {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    Vary: 'Origin',
+  } };
 }

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { AdminRole } from '@/lib/adminAuth';
 
 const LINKS = [
   { href: '/admin', label: 'Overview' },
@@ -10,12 +11,12 @@ const LINKS = [
   { href: '/admin/documents', label: 'Knowledge base' },
 ];
 
-export default function AdminNav() {
+export default function AdminNav({ role }: { role: AdminRole }) {
   const pathname = usePathname();
 
   return (
     <nav className="flex-1 px-3 py-4 space-y-1">
-      {LINKS.map((link) => {
+      {LINKS.filter((link) => role !== 'staff' || !['/admin/conversations', '/admin/flagged'].includes(link.href)).map((link) => {
         const isActive = link.href === '/admin' ? pathname === '/admin' : pathname.startsWith(link.href);
         return (
           <Link

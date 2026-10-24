@@ -1,4 +1,6 @@
-import { query } from '@/lib/db';
+import { queryPublic } from '@/lib/db';
+import { numberEnv } from './env';
+import { EMBEDDING_PROFILE } from './gemini';
 
 export interface DocumentMatch {
   id: string;
@@ -8,108 +10,88 @@ export interface DocumentMatch {
   metadata: Record<string, unknown>;
   similarity: number;
 }
-
 export interface SearchOptions {
   section?: string;
-  /** How many candidates to fetch from the DB before thresholding. */
+  queryText?: string;
+  departmentId?: string;
+  language?: string;
+  /** Authorization is server-owned; this API only exposes approved public evidence. */
+  audience?: 'public';
   candidateLimit?: number;
-  /** How many matches to actually keep/use as context after thresholding. */
   finalLimit?: number;
-  /** Minimum cosine similarity for a chunk to be considered relevant. */
   minSimilarity?: number;
 }
+export interface SearchResult { documents: DocumentMatch[]; hadSufficientContext: boolean }
 
-export interface SearchResult {
-  documents: DocumentMatch[];
-  hadSufficientContext: boolean;
+function boundedLimit(value: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error('Invalid retrieval limit');
+  return value;
 }
 
-// Empirically calibrated against the live corpus (documents.embedding,
-// gemini-embedding-2, cosine distance): real in-scope questions ("how much
-// do adult courses cost", "what documents do I need for the DELF exam")
-// scored 0.64-0.70 top-5 similarity, while clearly out-of-scope questions
-// ("capital of Australia", "chocolate cake recipe") topped out at 0.46-0.50.
-// 0.55 sits in the gap with margin on both sides. Tunable via RAG_MIN_SIMILARITY
-// if the corpus grows and the distribution shifts.
-const DEFAULT_MIN_SIMILARITY = Number(process.env.RAG_MIN_SIMILARITY ?? 0.55);
-const DEFAULT_CANDIDATE_LIMIT = 20;
-const DEFAULT_FINAL_LIMIT = 6;
-
-// documents.embedding is vector(3072), which exceeds pgvector's 2000-dim cap
-// for HNSW indexes on the native `vector` type. The migration indexes a
-// halfvec(3072) expression instead, so queries must cast identically
-// (embedding::halfvec(3072) <=> $1::halfvec(3072)) for the planner to use it.
-export async function searchDocuments(
-  queryEmbedding: number[],
-  options: SearchOptions = {},
-): Promise<SearchResult> {
-  const candidateLimit = options.candidateLimit ?? DEFAULT_CANDIDATE_LIMIT;
-  const finalLimit = options.finalLimit ?? DEFAULT_FINAL_LIMIT;
-  const minSimilarity = options.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
-  const embeddingParam = JSON.stringify(queryEmbedding);
-  const section = options.section && options.section !== 'all' ? options.section : undefined;
-
-  const sql = section
-    ? `SELECT id, content, source_type, source_name, metadata,
-              1 - (embedding::halfvec(3072) <=> $1::halfvec(3072)) AS similarity
-       FROM documents
-       WHERE metadata->>'section' = $2
-       ORDER BY embedding::halfvec(3072) <=> $1::halfvec(3072)
-       LIMIT $3`
-    : `SELECT id, content, source_type, source_name, metadata,
-              1 - (embedding::halfvec(3072) <=> $1::halfvec(3072)) AS similarity
-       FROM documents
-       ORDER BY embedding::halfvec(3072) <=> $1::halfvec(3072)
-       LIMIT $2`;
-
-  const params = section ? [embeddingParam, section, candidateLimit] : [embeddingParam, candidateLimit];
-  const { rows } = await query(sql, params);
-
-  const documents: DocumentMatch[] = rows
-    .map((row: Record<string, unknown>): DocumentMatch => ({
-      id: row.id as string,
-      content: row.content as string,
-      sourceType: row.source_type as string,
-      sourceName: row.source_name as string,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown>) ?? {},
-      similarity: Number(row.similarity),
-    }))
-    .filter((doc) => doc.similarity >= minSimilarity)
-    .slice(0, finalLimit);
-
-  return { documents, hadSufficientContext: documents.length > 0 };
-}
-
-export interface PastExampleMatch {
-  userMessage: string;
-  assistantReply: string;
-  similarity: number;
+/**
+ * Exact filtered dense + lexical search fused with reciprocal ranks. Materializing
+ * the authorized subset deliberately avoids filtered ANN underfill. Switch to ANN
+ * only after measuring department/language recall on a representative corpus.
+ * Candidate evidence is never permission to emit an unverified institutional fact.
+ */
+export async function searchDocuments(embedding: number[], options: SearchOptions = {}): Promise<SearchResult> {
+  if (embedding.length !== 3072 || embedding.some(v => !Number.isFinite(v))) throw new Error('Invalid query embedding');
+  if (options.audience && options.audience !== 'public') throw new Error('Invalid retrieval audience');
+  const minimum = options.minSimilarity ?? numberEnv('RAG_MIN_SIMILARITY', 0.55, 0.1, 1);
+  if (!Number.isFinite(minimum) || minimum < 0.1 || minimum > 1) throw new Error('Invalid similarity threshold');
+  const candidates = boundedLimit(options.candidateLimit ?? 30, 100);
+  const finalLimit = boundedLimit(options.finalLimit ?? 6, 20);
+  const sql = `WITH eligible AS MATERIALIZED (
+    SELECT id,content,source_type,source_name,metadata,embedding,source_id,authority
+    FROM public_knowledge_documents
+    WHERE embedding_model = $2
+      AND ($4::text IS NULL OR $4 = ANY(sections))
+      AND ($5::text IS NULL OR department_id = $5)
+  ), dense_candidates AS (
+    SELECT id, 1-(embedding::halfvec(3072) <=> $1::halfvec(3072)) AS similarity
+    FROM eligible ORDER BY embedding::halfvec(3072) <=> $1::halfvec(3072) LIMIT $6
+  ), dense AS (
+    SELECT *, row_number() OVER (ORDER BY similarity DESC,id) AS rank FROM dense_candidates
+  ), lexical_candidates AS (
+    SELECT id,ts_rank_cd(to_tsvector('simple',content),websearch_to_tsquery('simple',$3)) AS score
+    FROM eligible WHERE $3 <> '' AND to_tsvector('simple',content) @@ websearch_to_tsquery('simple',$3)
+    ORDER BY score DESC,id LIMIT $6
+  ), lexical AS (
+    SELECT *,row_number() OVER (ORDER BY score DESC,id) AS rank FROM lexical_candidates
+  ) SELECT e.id,e.content,e.source_type,e.source_name,e.metadata,
+      COALESCE(d.similarity,1-(e.embedding::halfvec(3072) <=> $1::halfvec(3072))) AS similarity,
+      COALESCE(1.0/(60+d.rank),0)+COALESCE(1.0/(60+l.rank),0) AS fusion_score
+    FROM eligible e LEFT JOIN dense d ON d.id=e.id LEFT JOIN lexical l ON l.id=e.id
+    WHERE (d.similarity >= $7 OR l.id IS NOT NULL)
+    ORDER BY fusion_score DESC,e.authority DESC,e.id LIMIT $6`;
+  const {rows} = await queryPublic(sql,[JSON.stringify(embedding),EMBEDDING_PROFILE,
+    (options.queryText ?? '').normalize('NFKC').slice(0,4000),
+    options.section && options.section !== 'all' ? options.section : null,
+    options.departmentId ?? null,candidates,minimum]);
+  const documents: DocumentMatch[] = [];
+  const perSource = new Map<string,number>();
+  const contents = new Set<string>();
+  for (const row of rows) {
+    const metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata ?? {};
+    const source = String(metadata.source_id ?? row.source_name);
+    const content = String(row.content);
+    const normalized = content.normalize('NFKC').replace(/\s+/g,' ').trim();
+    if (contents.has(normalized) || (perSource.get(source) ?? 0) >= 2) continue;
+    contents.add(normalized); perSource.set(source,(perSource.get(source) ?? 0)+1);
+    documents.push({id:String(row.id),content,sourceType:String(row.source_type),sourceName:String(row.source_name),
+      metadata,similarity:Number(row.similarity)});
+    if (documents.length >= finalLimit) break;
+  }
+  return {documents,hadSufficientContext:documents.length>0};
 }
 
 export function buildContextBlock(documents: DocumentMatch[]): string {
-  if (documents.length === 0) {
-    return 'No relevant context found.';
-  }
-  return documents
-    .map((doc, index) => {
-      const heading = typeof doc.metadata.section_heading === 'string' ? ` - ${doc.metadata.section_heading}` : '';
-      return `[Source ${index + 1}: ${doc.sourceName} (${doc.sourceType})${heading}]\n${doc.content}\n`;
-    })
-    .join('\n');
+  // JSON serialization prevents source names from forging ad-hoc source delimiters.
+  return JSON.stringify(documents.map(d=>({id:d.id,source:d.sourceName,metadata:d.metadata,text:d.content})));
 }
 
-export function toSources(documents: DocumentMatch[]): { source_name: string; source_type: string; url?: string }[] {
+export function toSources(documents: DocumentMatch[]): {source_name:string;source_type:string;url?:string}[] {
   const seen = new Set<string>();
-  const sources: { source_name: string; source_type: string; url?: string }[] = [];
-  for (const doc of documents) {
-    if (seen.has(doc.sourceName)) continue;
-    seen.add(doc.sourceName);
-    const isUrl = doc.sourceType === 'website' && /^https?:\/\//.test(doc.sourceName);
-    sources.push({
-      source_name: doc.sourceName,
-      source_type: doc.sourceType,
-      ...(isUrl ? { url: doc.sourceName } : {}),
-    });
-  }
-  return sources;
+  return documents.filter(d=>{if(seen.has(d.sourceName))return false;seen.add(d.sourceName);return true;})
+    .map(d=>({source_name:d.sourceName,source_type:d.sourceType,...(/^https:\/\/(?:www\.)?ifg\.gr\//i.test(d.sourceName)?{url:d.sourceName}:{})}));
 }

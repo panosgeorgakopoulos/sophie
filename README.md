@@ -1,235 +1,89 @@
-# Sophie — IFG Chat Widget & Backend
+# Sophie — IFG verified information assistant
 
-Sophie is a RAG (retrieval-augmented generation) chatbot for the [Institut
-Français de Grèce](https://www.ifg.gr) (ifg.gr). It's embedded as a small
-widget on the public site and answers questions about courses, exams, pricing,
-studies in France, and the library — grounded only in content actually
-ingested from ifg.gr and internal policy documents.
+Sophie serves Greek, French and English institutional information for the Institut Français de Grèce. This branch implements the remediation of the [21 October audit](docs/audit-2026-10-21/AUDIT.md). It is a staged release: existing ungoverned chunks are deliberately excluded from public answers until the institution reviews the new corpus and facts.
 
-## Architecture
+## Public answer boundary
 
-A single Next.js 16 app plays four roles:
+The public endpoint resolves an explicitly named subject against approved aliases, checks department, category, qualifiers and validity, and returns exact approved values with their source version and evidence quote. Email addresses, phone numbers, dates, addresses and fees are rendered without a model. Missing evidence, conflicting contacts, ambiguous subjects and mismatched course levels produce an abstention or clarification.
 
-1. **Backend API** (`src/app/api/chat`, `src/app/api/feedback`) — a
-   retrieval-augmented chat endpoint backed by Postgres + [pgvector](https://github.com/pgvector/pgvector)
-   and the [Gemini API](https://ai.google.dev) (free tier). See
-   [How the RAG pipeline works](#how-the-rag-pipeline-works) below.
-2. **Embeddable widget** (`src/widget/`) — a small React chat UI, built
-   separately by Vite into a single `public/widget.js` IIFE bundle that any
-   page can embed with one `<script>` tag (see
-   [Embedding the widget](#embedding-the-widget)).
-3. **Ingestion pipeline** (`src/scripts/run_ingestion.ts`) — a CLI script that
-   crawls ifg.gr and reads local policy documents (PDF/DOCX/XLSX/MD), chunks
-   and embeds the content, and stores it in `documents` for retrieval.
-4. **Staff admin dashboard** (`src/app/admin/`) — an internal, password-protected
-   UI for non-technical IFG staff to review conversations, feedback, and
-   flagged questions, and see what content Sophie actually knows about. See
-   [Staff Admin Dashboard](#staff-admin-dashboard) below.
+For policy questions, an optional model may select approved fact IDs. It cannot supply the displayed answer text. Public model selection is disabled by default. Database views, immutable evidence, explicit review and deterministic rendering enforce the boundary. Incorrect human approval or an incomplete alias catalog remain real risks; this is not a guarantee that every user question will be understood correctly.
 
-Two additional features exist in this repo but are **not covered by the
-production hardening described here** and should not be exposed until
-separately addressed:
+`src/lib/retrieval.ts` also provides approved-only dense plus PostgreSQL full-text search with reciprocal-rank fusion. It is available for evidence discovery; the public chat does **not** use unrestricted chunk synthesis. Its lexical rank is PostgreSQL `ts_rank_cd`, not BM25. Exact filtered search prioritizes recall and authorization correctness; benchmark representative corpus sizes before introducing approximate retrieval.
 
-- **Outlook add-in** (`src/app/outlook/`, `public/manifest.xml`,
-  `/api/draft-email`) — an internal staff email-drafting assistant. Its
-  manifest still hardcodes `localhost:3000`.
-- **Google Form webhook** (`/api/webhook/google-form`) — auto-drafts and
-  sends enrollment emails from form submissions. It has no signature/shared-secret
-  verification (anyone who finds the URL can trigger it) and sends student PII
-  (name, email, age, discount category) to the Gemini free tier without
-  minimization. This is a known, accepted risk, deferred by explicit product
-  decision — see [Known Limitations](#known-limitations).
+## Local setup
 
-## Prerequisites
+Use Node 26 for deployment and CI (the parser requires Node 25.8 or newer), PostgreSQL with pgvector supporting `halfvec`, and `npm ci`. Copy `.env.example` to `.env.local` and configure a local database. No credential is committed.
 
-1. A Postgres database with the `vector` extension available (Neon, Supabase's
-   Postgres, or any self-hosted Postgres with pgvector installed all work —
-   this app talks to it with the plain `pg` driver, not a vendor SDK).
-2. A [Gemini API key](https://aistudio.google.com/apikey) (the free tier is
-   sufficient for the MVP).
-
-## Environment Variables
-
-Copy `.env.example` to `.env.local` and fill in `DATABASE_URL` and
-`GEMINI_API_KEY` at minimum. See `.env.example` for what each variable does.
-
-## Setup
-
-```bash
-npm install
-
-# Apply the schema (creates tables, indexes; safe to re-run)
-psql "$DATABASE_URL" -f schema.sql
-
+```sh
+npm ci
+npm run db:migrate
 npm run dev
 ```
 
-`npm run dev` runs the Next.js dev server and a Vite watch-build of the widget
-concurrently. The API is available at `http://localhost:3000/api/chat`, and
-the widget is loaded on the Next app's own home page (`/`) for quick local
-testing, as well as via `/preview` (proxies a live ifg.gr page with the widget
-injected). A `public/demo.html` snapshot may also exist locally for offline
-preview — it's gitignored (not committed) since it's a full saved copy of a
-live ifg.gr page, including that page's own third-party API keys.
+`db:migrate` requires an explicit `MIGRATION_DATABASE_URL`. It bootstraps a fresh database, applies ordered migrations with a checksum ledger and advisory lock, and refuses modified applied migrations. `schema.sql` alone is only the historical bootstrap baseline. For an existing database, take and verify a backup first; there is no automatic destructive downgrade.
 
-## Running the Ingestion Pipeline
+`DATABASE_URL` is the operational application account. `PUBLIC_DATABASE_URL` is a separate account with SELECT on the two public views only. Production rejects a reader account which can select the raw document/fact tables. See [operations](docs/production-hardening.md) and [reader role provisioning](ops/public-reader.sql).
 
-```bash
-npx tsx src/scripts/run_ingestion.ts [datasetsDir] [sitemapIndexUrl] [--limit=N]
+## Ingestion
+
+```sh
+# Parse without database writes or embedding calls; reports partial coverage honestly.
+npm run ingest -- ./datasets https://www.ifg.gr/sitemap_index.xml --scope=local --manifest=./datasets/ingestion-manifest.json
+npm run ingest -- ./datasets https://www.ifg.gr/sitemap_index.xml --scope=web --limit=20
+
+# After provider/data-processing approval and review of dry-run results:
+npm run ingest -- ./datasets https://www.ifg.gr/sitemap_index.xml --manifest=./datasets/ingestion-manifest.json --write
 ```
 
-- `datasetsDir` (default `./datasets`): local folder of PDF/DOCX/XLSX/MD
-  policy documents to ingest. PDF ingestion is currently disabled by default
-  in `main()` pending verification of the installed `pdf-parse` version's
-  export shape — DOCX/XLSX/MD cover the current dataset.
-- `sitemapIndexUrl` (default `https://www.ifg.gr/sitemap_index.xml`): crawled
-  recursively. Thin auto-generated taxonomy sitemaps (category/tag/author) and
-  high-volume/time-sensitive ones (events, newsletters) are excluded by
-  default — see the `EXCLUDED_SITEMAP_PATTERNS` comment in
-  `run_ingestion.ts` for the reasoning. `/news/` posts older than
-  `NEWS_MAX_AGE_DAYS` (default 365) are skipped so stale announcements aren't
-  treated as current fact.
-- `--limit=N`: caps the number of website pages processed — useful for a
-  smoke test before burning free-tier embedding quota on a full run.
+Every local file needs an explicit manifest policy. See [the example](ops/ingestion-manifest.example.json). Local content defaults to private. Crawling follows allowlisted HTTPS links and linked PDFs, records tab/header/table/page context, decodes protected contacts and rejects unsafe redirects or private DNS answers. The crawler checks robots rules and bounds pages, depth, bytes and time. It deliberately excludes news/events/taxonomy feeds; maintain `requiredUrls` for all critical sources.
 
-Each source is re-ingested idempotently (delete-then-reinsert its chunks
-inside a transaction, so a crash mid-run can't leave a page with zero chunks).
-Re-run this periodically (manually, or via an external scheduler — it's a
-long-running rate-limited CLI job, not suited to a serverless function's
-timeout) to pick up new/changed content, since ifg.gr changes over time.
+New content is staged into an immutable version. Embeddings are calculated before the short publication transaction. Unchanged content avoids repeat embedding; changed content resets source approval. PDF/DOCX/XLSX production parsers require a digest-pinned container with no network or application secrets and bounded resources; local development uses a separate subprocess. Weak PDF extraction, unresolved dynamic tabs, unsupported DOCX constructs and spreadsheet formulas require remediation/manual review. The optional OCR adapter is an integration point, not an installed OCR service. JavaScript-only content is not claimed as successfully scraped.
 
-## How the RAG Pipeline Works
+Only a complete run can use `--reconcile` to withdraw previously indexed sources missing from its inventory. HTTP 404/410 withdraws that source. Failed extraction quarantines an existing source; partial crawls never mass-delete unseen pages. Keep critical facts time-bounded and monitor failed runs.
 
-1. The user's message is embedded (`gemini-embedding-2`) and matched against
-   `documents` by cosine similarity (pgvector, HNSW-indexed via a `halfvec`
-   expression — see `migrations/001_vector_indexes_and_cleanup.sql` for why).
-2. Matches below `RAG_MIN_SIMILARITY` (default 0.55, empirically calibrated —
-   see `src/lib/retrieval.ts`) are discarded. If nothing clears the bar, the
-   API returns a canned "I don't have verified information on this" reply in
-   the detected language (French/English/Greek) instead of calling the LLM —
-   this guarantees no hallucination on genuinely out-of-scope questions and
-   saves a Gemini call.
-3. Otherwise, the surviving chunks are assembled into a context block and
-   sent to `gemini-3.5-flash-lite` alongside the system prompt
-   (`src/config/systemPrompt.ts`), which enforces IFG's persona, conversation
-   rules (e.g. asking clarifying questions before quoting course pricing),
-   and a "never state a fact that isn't in the context" grounding rule.
-4. The reply, plus deduplicated sources (with clickable URLs where
-   applicable), are returned to the widget and logged to `chat_logs`.
+## Uploads and review
 
-An earlier version of this pipeline also re-injected past `is_helpful=true`
-chat logs as live few-shot examples ("RAG on logs"). That was removed: it was
-an unmoderated feedback loop (a user's own thumbs-up could reshape future
-answers with no human review) and was exploitable before the `/api/feedback`
-IDOR fix. `chat_logs.is_helpful` is retained purely as an analytics signal for
-manual review, not as live prompt input.
+Staff may upload PDF, DOCX, XLSX or Markdown through `POST /api/admin/uploads`; this is an authenticated API, not yet a graphical upload form. Uploads are limited to 20 MiB, stored outside the application tree, queued and scanned by configured ClamAV before parsing. Run `npm run uploads:process` in the isolated ingestion worker. Scanner absence or failure never bypasses scanning. Replacing the same logical filename in the same department creates a new pending version. See the exact request and review sequence in [the runbook](docs/production-hardening.md#review-workflow).
 
-## Building the Widget
+Reviewers approve a source version and then individual, expiring facts through `/api/admin/knowledge`. Fact drafts require an exact value inside an exact evidence quote, a department-bound source version, subject aliases, language and any course/date/audience qualifiers. Source approval alone does not make unreviewed facts answerable. Conflicting values abstain; authority ranking does not resolve institutional policy disagreements automatically.
 
-```bash
-npx vite build
+Create staff accounts with a hidden interactive password prompt:
+
+```sh
+npx tsx src/scripts/create_admin_user.ts reviewer@ifg.gr 'Reviewer Name' reviewer
 ```
 
-Outputs `public/widget.js`, a self-contained IIFE. `npm run build` runs this
-automatically before `next build`, so a production build never ships a stale
-widget bundle.
+Roles are `staff`, `reviewer`, and `admin`. Password/role/disable changes revoke existing sessions; logout deletes its opaque bearer token. Protect production staff access with the institution's approved SSO/MFA gateway. No identity provider has been fabricated or configured by this change.
 
-## Embedding the Widget on ifg.gr
+## Privacy and integrations
+
+The widget sends no caller-authored assistant history. It keeps displayed messages in page memory and a random conversation token in session storage. Server context contains only selected institutional subject/qualifiers/language and expires after 30 minutes. Application analytics omit raw questions and query embeddings. Clear conversation removes its context and associated logs, including concurrent insert protection. Schedule `npm run db:maintain` hourly; see the runbook for retention, legacy transcript removal and backup policy.
+
+The public technical privacy page needs institutional legal/controller information before launch. Embeddings require both `GEMINI_PROCESSING_APPROVED=true` and `GEMINI_PAID_SERVICE_CONFIRMED=true`; public policy selection requires both `GEMINI_APPROVED_FOR_PUBLIC_USE=true` and paid-service confirmation. All gates default false. These controls do not themselves establish lawful processing, contractual suitability or data residency.
+
+The unsafe automatic email webhook and draft endpoint return `503`; Outlook no longer reads or transmits messages. Re-enabling mail requires a separately reviewed authenticated approval/outbox workflow. Production `/preview` returns `404`; development uses a local fixture.
+
+## Build and verification
+
+```sh
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm audit
+
+# Use only an isolated test database whose name starts with sophie_test_.
+MIGRATION_DATABASE_URL=postgres://localhost/sophie_test_local npm run db:migrate
+TEST_DATABASE_URL=postgres://localhost/sophie_test_local npm run test:db
+TEST_DATABASE_URL=postgres://localhost/sophie_test_local npm run test:http
+```
+
+The CI workflow is configured to repeat checks and database integration against an isolated pgvector service; it has not been run on GitHub as part of this local change. `test:db` resets application tables in its explicitly named test database. The tests cover evidence permissions and version changes, multilingual exact subjects, private/expired/wrong-department exclusion, session revocation, concurrent quotas and real document parser fixtures. They use synthetic data and mocked model responses; they do not validate the live IFG corpus or provider quality. [The validation record](docs/validation-2026-10-24/README.md) records local results. [The rollout guide](docs/production-hardening.md) records the remaining launch gates and audit mapping.
+
+The widget bundle is produced by Vite during `npm run build`:
 
 ```html
-<script src="https://your-deployment-url/widget.js" data-api-url="https://your-deployment-url/api/chat" defer></script>
+<script src="https://YOUR-DEPLOYMENT/widget.js" data-api-url="https://YOUR-DEPLOYMENT/api/chat" defer></script>
 ```
 
-The backend must have `ALLOWED_ORIGINS` set to include the real ifg.gr
-origin(s) for the widget's cross-origin requests to succeed (see
-`src/lib/cors.ts`).
-
-## Staff Admin Dashboard
-
-An internal dashboard at `/admin` lets IFG staff — not just IT — see how
-Sophie is doing without touching the database or code:
-
-- **Overview**: conversation volume, helpful/not-helpful feedback rate, how
-  many conversations need review, and what's in the knowledge base by
-  category.
-- **Conversations**: browse every question and answer, filterable by
-  category.
-- **Needs review**: conversations where Sophie couldn't find a confident
-  answer — the fastest way to spot a missing or outdated page. Staff can mark
-  items resolved once they've acted on them (e.g. asked IT to add a page, or
-  determined it's a one-off).
-- **Knowledge base**: every page/document Sophie has actually read, with a
-  link back to the live page where applicable — answers what "does Sophie
-  know about X" without needing DB access.
-
-It is **not** the widget's public API and is not exposed to ifg.gr visitors.
-
-### Creating a staff account
-
-There's no public sign-up form by design. Create or reset an account from the
-server with:
-
-```bash
-npx tsx src/scripts/create_admin_user.ts "marie@ifg.gr" "a-strong-password" "Marie Dupont" staff
-```
-
-The last argument (`role`) is currently informational (`staff` or `admin`) —
-a hook for role-based permissions later without changing the schema. Anyone
-with an account can currently see everything; add per-role restrictions in
-`src/app/admin/(protected)/` if that becomes necessary.
-
-Requires `ADMIN_SESSION_SECRET` to be set (see `.env.example`) — the app
-fails fast on startup of any admin route if it's missing, same as a missing
-`GEMINI_API_KEY`.
-
-## Testing
-
-```bash
-npm test              # Vitest unit tests (chunking, section mapping, validation, retrieval)
-npx tsx src/scripts/smoke_test.ts       # hits a running dev server, checks for non-empty replies
-npx tsx src/scripts/test_scenarios.ts   # writes qualitative multilingual scenario transcripts to docs/scenario_results.md
-```
-
-See `docs/golden-questions.md` for a curated list of real questions with
-expected facts, meant for manual review after prompt/ingestion changes —
-full natural-language answer correctness can't be reliably automated without
-a separate LLM-judge layer, which is out of scope for this MVP.
-
-## Known Limitations
-
-- **Free-tier Gemini quota is opaque and Google-controlled.** Exact
-  RPM/TPM/RPD limits are only visible per-project in AI Studio, not published,
-  and can change. `src/lib/gemini.ts` retries transient 429s with backoff, and
-  `src/lib/rateLimit.ts` throttles per-IP request volume, but sustained load
-  can still degrade to "please try again" responses.
-- **Grounding reduces but cannot fully guarantee zero hallucination.** Even
-  with a similarity threshold and an explicit anti-hallucination system
-  prompt rule, an LLM can still misstate or conflate retrieved facts. Mitigated,
-  not solved, by the golden-question review process above.
-- **The `/api/feedback` IDOR fix relies on a client-supplied, non-authenticated
-  `session_id`** (the app has no login system). It closes the "rate any
-  arbitrary log_id" attack but isn't cryptographic auth. Acceptable since
-  feedback is no longer read by the live prompt pipeline.
-- **The Google Form webhook and Outlook add-in are explicitly out of scope**
-  for the hardening in this repo's current state (see
-  [Architecture](#architecture)) — do not expose them publicly as-is.
-- **Rate limiting is in-memory, per server process**, not a shared/distributed
-  store. On a platform running multiple concurrent instances, each enforces
-  its own limit rather than a global one. A meaningful mitigation for the MVP;
-  if traffic grows enough to matter, swap `src/lib/rateLimit.ts`'s
-  implementation for a shared store (e.g. Redis) behind the same
-  `checkRateLimit()` signature.
-- **Admin dashboard accounts are flat** — any staff account can see every
-  conversation and the whole knowledge base; there's no per-role restriction
-  yet (the `role` column on `admin_users` is there for this, unused so far).
-  Fine for a small, trusted staff group; add checks in
-  `src/app/admin/(protected)/` before opening it up more widely.
-- **Ingestion coverage depends on ifg.gr's sitemap being complete and its URL
-  structure staying stable.** A page under an unrecognized path still gets
-  ingested (just untagged, served only under the "All" filter) rather than
-  silently dropped — see `src/lib/sectionMapping.ts`.
-- **`xlsx` has a known high-severity advisory with no upstream fix
-  available** (prototype pollution / ReDoS). It's only used by the offline
-  ingestion script against admin-supplied local files, not reachable from the
-  public API surface, so this is an accepted, documented risk rather than a
-  live one.
+Configure exact widget origins, canonical `APP_ORIGIN` and an ingress-overwritten client IP header. Block direct access to the origin. CORS is a browser control, not authentication; shared server quotas remain mandatory.

@@ -3,56 +3,33 @@ import { query } from '@/lib/db';
 import { FeedbackRequestSchema } from '@/lib/validation';
 import { checkRateLimit, getClientKey } from '@/lib/rateLimit';
 import { checkCors } from '@/lib/cors';
+import { readJsonBody } from '@/lib/requestBody';
 import { toSafeErrorResponse } from '@/lib/apiError';
+import { hashToken } from '@/lib/conversation';
 
 export async function OPTIONS(req: Request) {
   const cors = checkCors(req.headers.get('origin'));
   if (!cors.allowed) return new NextResponse(null, { status: 403 });
   return new NextResponse(null, { status: 204, headers: cors.headers });
 }
-
 export async function POST(req: Request) {
-  const origin = req.headers.get('origin');
-  const cors = checkCors(origin);
-  if (!cors.allowed) {
-    return NextResponse.json({ error: 'Origin not allowed' }, { status: 403 });
-  }
-
-  const clientKey = getClientKey(req);
-  const rate = checkRateLimit(`feedback:${clientKey}`, { limit: 20, windowMs: 60_000 });
-  if (!rate.success) {
-    return NextResponse.json(
-      { error: 'Too many requests.' },
-      { status: 429, headers: { ...cors.headers, 'Retry-After': String(Math.ceil(rate.retryAfterMs / 1000)) } },
-    );
-  }
-
-  let parsed;
+  const cors = checkCors(req.headers.get('origin'));
+  if (!cors.allowed) return NextResponse.json({ error: 'Origin not allowed' }, { status: 403 });
+  const headers = { ...cors.headers, 'Cache-Control': 'no-store' };
   try {
-    parsed = FeedbackRequestSchema.parse(await req.json());
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400, headers: cors.headers });
-  }
-
-  try {
-    // Scoping the update to the session that created the log closes the
-    // previous IDOR (any caller could flip is_helpful on any log_id). This
-    // isn't cryptographic auth -- session_id is client-supplied and the app
-    // has no login system -- but it stops the trivial "guess a UUID, rate it
-    // helpful" attack, which mattered more when ratings fed live prompts.
-    // They no longer do (see chat route); feedback is now an analytics-only
-    // signal for manual review.
-    const result = await query(
-      'UPDATE chat_logs SET is_helpful = $1 WHERE id = $2 AND session_id = $3',
-      [parsed.is_helpful, parsed.log_id, parsed.session_id],
-    );
-
-    if (result.rowCount === 0) {
-      return NextResponse.json({ error: 'Log not found for this session' }, { status: 404, headers: cors.headers });
-    }
-
-    return NextResponse.json({ success: true }, { headers: cors.headers });
-  } catch (error) {
-    return toSafeErrorResponse(error, 'feedback route', { headers: cors.headers });
-  }
+    const rate = await checkRateLimit(`feedback:${getClientKey(req)}`, { limit: 20, windowMs: 60_000 });
+    if (!rate.success) return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers });
+    const parsed = FeedbackRequestSchema.safeParse(await readJsonBody(req, { maxBytes: 2048 }));
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid request body' }, { status: 400, headers });
+    const data = parsed.data;
+    const result = await query(`UPDATE chat_logs AS log SET is_helpful = $1, feedback_token_hash = NULL
+      FROM chat_sessions AS session
+      WHERE log.id = $2 AND log.session_id = session.id::text
+        AND log.feedback_token_hash = $3 AND session.token_hash = $4
+        AND session.expires_at > now() AND log.expires_at > now() AND log.is_helpful IS NULL`, [
+      data.is_helpful, data.log_id, hashToken(data.feedback_token), hashToken(data.session_token),
+    ]);
+    if (!result.rowCount) return NextResponse.json({ error: 'Feedback authorization expired or already used' }, { status: 404, headers });
+    return NextResponse.json({ success: true }, { headers });
+  } catch (error) { return toSafeErrorResponse(error, 'feedback route', { headers }); }
 }

@@ -1,67 +1,61 @@
-// In-memory sliding-window rate limiter keyed by an identifier (typically
-// client IP). This protects the scarce resource that actually matters here
-// (free-tier Gemini quota + DB load) without requiring a new external service
-// for the MVP.
-//
-// Trade-off: this tracks state per server process. On a platform that runs
-// multiple concurrent instances (e.g. serverless with high concurrency), each
-// instance enforces its own limit, so the effective ceiling is per-instance
-// rather than global. That's an accepted MVP trade-off -- it still meaningfully
-// throttles casual abuse and protects quota. If usage grows enough that this
-// matters, swap this module for a shared store (e.g. Upstash Redis via the
-// Vercel Marketplace) behind the same checkRateLimit() signature.
+import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
+import { query } from './db';
+import { HttpError } from './httpError';
 
-interface Bucket {
-  timestamps: number[];
-}
-
+export interface RateLimitOptions { limit: number; windowMs: number }
+export interface RateLimitResult { success: boolean; remaining: number; retryAfterMs: number }
+interface Bucket { count: number; expiresAt: number }
 const buckets = new Map<string, Bucket>();
 
-export interface RateLimitOptions {
-  limit: number;
-  windowMs: number;
-}
-
-export interface RateLimitResult {
-  success: boolean;
-  remaining: number;
-  retryAfterMs: number;
-}
-
-export function checkRateLimit(key: string, options: RateLimitOptions): RateLimitResult {
-  const now = Date.now();
-  const bucket = buckets.get(key) ?? { timestamps: [] };
-  bucket.timestamps = bucket.timestamps.filter((t) => now - t < options.windowMs);
-
-  if (bucket.timestamps.length >= options.limit) {
-    buckets.set(key, bucket);
-    const oldest = bucket.timestamps[0];
-    return { success: false, remaining: 0, retryAfterMs: Math.max(0, options.windowMs - (now - oldest)) };
+/** Shared fixed-window counter. The database's clock and UPSERT serialize concurrent instances. */
+export async function checkRateLimit(key: string, options: RateLimitOptions): Promise<RateLimitResult> {
+  const { limit, windowMs } = options;
+  if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(windowMs) || windowMs < 1) {
+    throw new Error('Invalid rate limit configuration');
   }
-
-  bucket.timestamps.push(now);
-  buckets.set(key, bucket);
-  return { success: true, remaining: options.limit - bucket.timestamps.length, retryAfterMs: 0 };
+  const bucketKey = createHash('sha256').update(`${windowMs}:${limit}:${key}`).digest('hex');
+  if (process.env.NODE_ENV === 'production' || process.env.RATE_LIMIT_STORE === 'postgres') {
+    try {
+      const { rows } = await query<{ hits: number; retry_after_ms: number }>(`
+        INSERT INTO rate_limit_buckets (bucket_key, hits, expires_at)
+        VALUES ($1, 1, clock_timestamp() + ($2 * interval '1 millisecond'))
+        ON CONFLICT (bucket_key) DO UPDATE SET
+          hits = CASE WHEN rate_limit_buckets.expires_at <= clock_timestamp() THEN 1
+                 ELSE LEAST(rate_limit_buckets.hits + 1, $3 + 1) END,
+          expires_at = CASE WHEN rate_limit_buckets.expires_at <= clock_timestamp()
+                       THEN clock_timestamp() + ($2 * interval '1 millisecond')
+                       ELSE rate_limit_buckets.expires_at END
+        RETURNING hits, GREATEST(0, CEIL(EXTRACT(EPOCH FROM (expires_at - clock_timestamp())) * 1000))::integer AS retry_after_ms
+      `, [bucketKey, windowMs, limit]);
+      if (!rows[0]) throw new Error('Missing rate limit result');
+      return {
+        success: rows[0].hits <= limit,
+        remaining: Math.max(0, limit - rows[0].hits),
+        retryAfterMs: rows[0].hits <= limit ? 0 : rows[0].retry_after_ms,
+      };
+    } catch {
+      // A failed shared store must never silently expand quota using a local fallback.
+      throw new HttpError(503, 'Service temporarily unavailable. Please try again shortly.');
+    }
+  }
+  const now = Date.now();
+  if (buckets.size >= 10_000) {
+    for (const [storedKey, bucket] of buckets) if (bucket.expiresAt <= now) buckets.delete(storedKey);
+    if (buckets.size >= 10_000 && !buckets.has(bucketKey)) throw new HttpError(503, 'Service temporarily unavailable.');
+  }
+  const existing = buckets.get(bucketKey);
+  const bucket = existing && existing.expiresAt > now ? existing : { count: 0, expiresAt: now + windowMs };
+  bucket.count = Math.min(limit + 1, bucket.count + 1);
+  buckets.set(bucketKey, bucket);
+  return { success: bucket.count <= limit, remaining: Math.max(0, limit - bucket.count), retryAfterMs: bucket.count <= limit ? 0 : bucket.expiresAt - now };
 }
 
 export function getClientKey(req: Request): string {
-  const forwardedFor = req.headers.get('x-forwarded-for');
-  if (forwardedFor) return forwardedFor.split(',')[0].trim();
-  const realIp = req.headers.get('x-real-ip');
-  if (realIp) return realIp;
-  return 'unknown';
+  // Set ONLY to a header overwritten by a trusted ingress; block direct origin access.
+  // Never accept a forwarding chain supplied by a browser. Missing configuration
+  // deliberately groups clients into one conservative bucket instead of trusting spoofed IPs.
+  const trustedHeader = process.env.TRUSTED_CLIENT_IP_HEADER?.trim().toLowerCase();
+  const value = trustedHeader ? req.headers.get(trustedHeader)?.trim() : undefined;
+  return value && isIP(value) ? value.toLowerCase() : 'unknown';
 }
-
-// Periodic sweep so long-lived server processes don't accumulate unbounded
-// entries for one-off/rotating IPs.
-const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-const STALE_AFTER_MS = 10 * 60 * 1000;
-const sweepTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of buckets) {
-    if (bucket.timestamps.every((t) => now - t > STALE_AFTER_MS)) {
-      buckets.delete(key);
-    }
-  }
-}, SWEEP_INTERVAL_MS);
-sweepTimer.unref?.();

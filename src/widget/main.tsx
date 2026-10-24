@@ -18,10 +18,11 @@ const root = createRoot(container);
 // Pass configuration if needed via data attributes on the script tag
 // e.g. <script src="widget.js" data-api-url="https://example.com/api/chat"></script>
 const scriptTag = document.currentScript as HTMLScriptElement;
+const privacyUrl = scriptTag?.getAttribute('data-privacy-url') || undefined;
 const apiUrl = scriptTag?.getAttribute('data-api-url') || '/api/chat';
 
 root.render(
   <React.StrictMode>
-    <ChatWidget apiUrl={apiUrl} />
+    <ChatWidget apiUrl={apiUrl} privacyUrl={privacyUrl} />
   </React.StrictMode>
 );

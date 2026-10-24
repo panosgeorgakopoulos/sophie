@@ -27,7 +27,7 @@ export default async function RootLayout({
   const headersList = await headers();
   const pathname = headersList.get("x-pathname") ?? "";
   // The internal staff dashboard must never load the public-facing widget.
-  const showWidget = !pathname.startsWith("/admin");
+  const showWidget = !pathname.startsWith("/admin") && !pathname.startsWith("/outlook");
 
   return (
     <html

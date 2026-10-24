@@ -1,25 +1,21 @@
 import { z } from 'zod';
 
-const KNOWN_SECTIONS = ['all', 'mathimata', 'eksetaseis', 'spoudes', 'synergeies', 'vivliothiki'] as const;
+export const KNOWN_SECTIONS = ['all', 'mathimata', 'eksetaseis', 'spoudes', 'synergeies', 'vivliothiki'] as const;
+export const OpaqueTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid token');
 
-export const ConversationMessageSchema = z.object({
-  role: z.enum(['user', 'assistant']),
-  content: z.string().max(4000),
-});
-
+// Strict parsing deliberately rejects caller-authored histories and session IDs.
 export const ChatRequestSchema = z.object({
-  message: z.string().trim().min(1, 'message is required').max(2000, 'message is too long'),
-  conversation_history: z.array(ConversationMessageSchema).max(20).optional().default([]),
-  session_id: z.string().min(1).max(200).optional().default('anonymous'),
+  message: z.string().trim().min(1).max(2000),
+  session_token: OpaqueTokenSchema.optional(),
   section: z.enum(KNOWN_SECTIONS).optional().default('all'),
-});
-
+}).strict();
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
 
 export const FeedbackRequestSchema = z.object({
-  log_id: z.string().uuid('log_id must be a valid UUID'),
+  log_id: z.string().uuid(),
   is_helpful: z.boolean(),
-  session_id: z.string().min(1).max(200),
-});
-
+  session_token: OpaqueTokenSchema,
+  feedback_token: OpaqueTokenSchema,
+}).strict();
 export type FeedbackRequest = z.infer<typeof FeedbackRequestSchema>;
+export const DeleteConversationSchema = z.object({ session_token: OpaqueTokenSchema }).strict();

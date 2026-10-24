@@ -35,6 +35,7 @@ async function runScenarios() {
 
   for (const scenario of scenarios) {
     markdownOutput += `## ${scenario.title}\n`;
+    let sessionToken: string | undefined;
     
     for (const question of scenario.questions) {
       markdownOutput += `### User Query: \n> "${question}"\n\n`;
@@ -45,9 +46,9 @@ async function runScenarios() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: question,
-            conversation_history: [],
-            session_id: 'test_scenario_script'
-          })
+            session_token: sessionToken,
+          }),
+          signal: AbortSignal.timeout(25000),
         });
 
         if (!response.ok) {
@@ -55,12 +56,13 @@ async function runScenarios() {
         }
 
         const data = await response.json();
+        sessionToken=data.session_token;
         
         markdownOutput += `**Sophie's Reply:**\n\n${data.reply}\n\n`;
         markdownOutput += `---\n\n`;
         
-        // Sleep slightly to avoid rate limits on free Gemini tier
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Stay below the application request quota.
+        await new Promise(resolve => setTimeout(resolve, 6500));
         
       } catch (error) {
         console.error(`Failed to get response for question: ${question}`, error);

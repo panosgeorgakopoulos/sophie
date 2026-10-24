@@ -1,3 +1,5 @@
+-- Bootstrap baseline ONLY. Use npm run db:migrate for a complete installation;
+-- the migration runner applies versioned migrations after this baseline.
 -- Enable pgvector extension
 create extension if not exists vector;
 

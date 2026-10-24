@@ -1,0 +1,6 @@
+{"test":"unauthenticated oversized draft reaches model and all-document SQL","status":200,"inputCharacters":2000000,"operations":["embed","sql","generate"],"returnedSource":"INTERNAL_POLICY.docx"}
+{"test":"unauthenticated webhook forwards arbitrary recipient list","status":200,"mockedSends":1,"recipient":"first@example.invalid,second@example.invalid"}
+{"test":"SMTP failure still reports success","status":200,"success":true}
+{"test":"preview retains upstream scripts under application origin","status":200,"inlineScriptPreserved":true,"externalScriptPreserved":true,"routeContentSecurityPolicy":null}
+{"test":"rotated forwarded headers create independent login buckets","attempts":30,"accepted":30}
+{"test":"logout clears browser cookie but captured token remains valid","cookieCleared":true,"capturedTokenAcceptedAfterLogout":true}

@@ -1,3 +1,4 @@
+import { requireAdminSession } from '@/lib/adminSession';
 import { query } from '@/lib/db';
 
 interface Stats {
@@ -12,6 +13,7 @@ interface Stats {
 }
 
 async function getStats(): Promise<Stats> {
+  await requireAdminSession();
   const [totals, ratings, flagged, docs, docsBySection] = await Promise.all([
     query(`
       SELECT
@@ -88,9 +90,9 @@ export default async function AdminOverviewPage() {
           Knowledge base — {stats.documentsCount} indexed content chunks
         </h2>
         <p className="text-xs text-gray-500 mb-4">
-          What Sophie has actually read from ifg.gr and internal documents, broken down by category.
-          &quot;(unmapped)&quot; pages are still used to answer questions, just not tied to a specific
-          category filter in the widget.
+          All stored chunks, including legacy, private, pending, and inactive versions. Public answers
+          require approved facts linked to the current approved public source. This inventory count
+          does not imply that a chunk can appear in a public answer.
         </p>
         <div className="space-y-2">
           {stats.documentsBySection.map((row) => (

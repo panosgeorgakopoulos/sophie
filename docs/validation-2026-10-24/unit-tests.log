@@ -1,0 +1,12 @@
+
+> sophie@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.12 /Users/panosgeorgakopoulos/Downloads/sophie
+
+
+ Test Files  25 passed (25)
+      Tests  172 passed (172)
+   Start at  11:50:27
+   Duration  1.74s (transform 603ms, setup 0ms, import 1.79s, tests 1.67s, environment 2ms)

@@ -1,0 +1,7 @@
+
+> sophie@0.1.0 db:migrate
+> tsx src/scripts/migrate.ts
+
+
+> sophie@0.1.0 db:migrate
+> tsx src/scripts/migrate.ts

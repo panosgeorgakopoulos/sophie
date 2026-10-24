@@ -1,3 +1,4 @@
+import { requireAdminSession } from '@/lib/adminSession';
 import Link from 'next/link';
 import { query } from '@/lib/db';
 
@@ -29,8 +30,9 @@ export default async function ConversationsPage({
 }: {
   searchParams: Promise<{ page?: string; section?: string }>;
 }) {
+  await requireAdminSession(['reviewer', 'admin']);
   const params = await searchParams;
-  const page = Math.max(1, Number(params.page) || 1);
+  const page = Math.min(10_000, Math.max(1, Math.floor(Number(params.page) || 1)));
   const section = params.section && SECTIONS.includes(params.section) ? params.section : 'all';
   const offset = (page - 1) * PAGE_SIZE;
 

@@ -1,3 +1,4 @@
+import { requireAdminSession } from '@/lib/adminSession';
 import Link from 'next/link';
 import { query } from '@/lib/db';
 import { resolveFlaggedConversation } from './actions';
@@ -17,6 +18,7 @@ export default async function FlaggedPage({
 }: {
   searchParams: Promise<{ show?: string }>;
 }) {
+  await requireAdminSession(['reviewer', 'admin']);
   const params = await searchParams;
   const showResolved = params.show === 'resolved';
 
